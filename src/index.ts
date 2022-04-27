@@ -218,4 +218,4 @@ async function stream() {
 }
 
 stream();
-app.listen(PORT);
+app.listen(PORT, (_, address) => console.log(address));
