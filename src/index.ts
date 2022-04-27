@@ -1,4 +1,8 @@
-import { TwitterApi } from 'twitter-api-v2';
+import {
+  IParsedOAuth2TokenResult,
+  TwitterApi,
+  TwitterApiReadOnly,
+} from 'twitter-api-v2';
 import fastify from 'fastify';
 import fastifyStatic from 'fastify-static';
 import fastifyCookie from '@fastify/cookie';
@@ -7,41 +11,58 @@ import fastifyRedis from '@fastify/redis';
 import path from 'path';
 import readenv from '@cm-ayf/readenv';
 
+type Token = Pick<
+  IParsedOAuth2TokenResult,
+  'accessToken' | 'refreshToken' | 'expiresIn'
+> & {
+  expiresAt: number;
+};
+
 if (process.env.NODE_ENV !== 'production')
   // eslint-disable-next-line @typescript-eslint/no-var-requires
   require('dotenv').config();
 
 const PORT = 3000;
 
-const { HOST, PRODUCTION, REDIS_URL, REDIRECT_HOST, SECRET, ...CLIENT } =
-  readenv({
-    clientId: {
-      from: 'CLIENT_ID',
-    },
-    clientSecret: {
-      from: 'CLIENT_SECRET',
-    },
-    REDIS_URL: {
-      default: 'redis://localhost:6379',
-    },
-    HOST: {
-      from: 'HEROKU_APP_NAME',
-      parse: (value) => `${value}.herokuapp.com`,
-      default: `127.0.0.1:${PORT}`,
-    },
-    REDIRECT_HOST: {
-      default: null,
-    },
-    SECRET: {
-      default:
-        '#ウ考寝  #そ無寝しぽ👋 おやすみなさい　テレビの発熱はかなりデカいので、こういう日に締め切った部屋でテレビゲームをし続けるのはやめた方がいい',
-    },
-    PRODUCTION: {
-      from: 'NODE_ENV',
-      parse: (value) => value === 'production',
-      default: false,
-    },
-  });
+const {
+  BEARER_TOKEN,
+  USER_ID,
+  HOST,
+  REDIRECT_HOST,
+  REDIS_URL,
+  SECRET,
+  PRODUCTION,
+  ...CLIENT
+} = readenv({
+  clientId: {
+    from: 'CLIENT_ID',
+  },
+  clientSecret: {
+    from: 'CLIENT_SECRET',
+  },
+  BEARER_TOKEN: {},
+  USER_ID: {},
+  HOST: {
+    from: 'HEROKU_APP_NAME',
+    parse: (value) => `${value}.herokuapp.com`,
+    default: `127.0.0.1:${PORT}`,
+  },
+  REDIRECT_HOST: {
+    default: null,
+  },
+  REDIS_URL: {
+    default: 'redis://localhost:6379',
+  },
+  SECRET: {
+    default:
+      '#ウ考寝  #そ無寝しぽ👋 おやすみなさい　テレビの発熱はかなりデカいので、こういう日に締め切った部屋でテレビゲームをし続けるのはやめた方がいい',
+  },
+  PRODUCTION: {
+    from: 'NODE_ENV',
+    parse: (value) => value === 'production',
+    default: false,
+  },
+});
 
 const redirectUri = `https://${REDIRECT_HOST ?? HOST}/callback`;
 
@@ -63,17 +84,11 @@ app.register(FastifySessionPlugin, {
 app.register(fastifyRedis, {
   url: REDIS_URL,
 });
-
-const api = new TwitterApi(CLIENT);
-
 app.register(fastifyStatic, {
   root: path.join(process.cwd(), 'public'),
 });
 
-app.addHook('onRequest', (request, _, done) => {
-  request.log.info(request.session.sessionId);
-  done();
-});
+const api = new TwitterApi(CLIENT);
 
 app.get('/login', async (request, reply) => {
   const {
@@ -132,11 +147,55 @@ app.get('/callback', async (request, reply) => {
 
   const { data: user } = await loggedClient.currentUserV2();
   await app.redis.set(
-    `token_${user.id}`,
+    `token:${user.id}`,
     JSON.stringify({ ...token, expiresAt: Date.now() + expiresIn * 1000 })
   );
 
   reply.redirect('/');
 });
 
+async function stream() {
+  const tweets = await new TwitterApiReadOnly(BEARER_TOKEN).v2.userTimeline(
+    USER_ID,
+    {
+      exclude: ['replies', 'retweets'],
+      'tweet.fields': ['id', 'text', 'source'],
+    }
+  );
+
+  for await (const tweet of tweets) {
+    if (tweet.source !== 'twittbot.net') continue;
+    const tokens = await app.redis.hgetall('token:*');
+
+    await Promise.all(
+      Object.entries(tokens).map(([key, token]) => {
+        const { expiresAt, accessToken, refreshToken } = JSON.parse(
+          token
+        ) as Token;
+        const [, userId] = key.split(':');
+
+        if (Date.now() > expiresAt && refreshToken) {
+          return api
+            .refreshOAuth2Token(refreshToken)
+            .then(({ client, expiresIn, ...token }) =>
+              Promise.all([
+                app.redis.set(
+                  key,
+                  JSON.stringify({
+                    ...token,
+                    expiresAt: Date.now() + expiresIn * 1000,
+                  })
+                ),
+                client.v2.like(userId, tweet.id),
+              ])
+            );
+        } else {
+          return new TwitterApi(accessToken).v2.like(userId, tweet.id);
+        }
+      })
+    );
+  }
+}
+
+stream();
 app.listen(PORT);
