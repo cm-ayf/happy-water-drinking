@@ -44,7 +44,7 @@ const {
   HOST: {
     from: 'HEROKU_APP_NAME',
     parse: (value) => `${value}.herokuapp.com`,
-    default: '127.0.0.1:3000',
+    default: '0.0.0.0:3000',
   },
   REDIRECT_HOST: {
     default: null,
@@ -218,4 +218,4 @@ async function stream() {
 }
 
 stream();
-app.listen(PORT, (_, address) => console.log(address));
+app.listen(PORT, '0.0.0.0', (_, address) => console.log(address));
