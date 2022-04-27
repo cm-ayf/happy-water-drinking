@@ -132,11 +132,13 @@ app.get('/callback', async (request, reply) => {
     return;
   }
 
-  const loginResult = await api.loginWithOAuth2({
-    code,
-    redirectUri,
-    codeVerifier,
-  });
+  const loginResult = await api
+    .loginWithOAuth2({
+      code,
+      redirectUri,
+      codeVerifier,
+    })
+    .catch(() => null);
 
   if (!loginResult) {
     reply.code(400).send({ error: 'invalid code' });
@@ -146,8 +148,9 @@ app.get('/callback', async (request, reply) => {
   const { client: loggedClient, expiresIn, ...token } = loginResult;
 
   const { data: user } = await loggedClient.currentUserV2();
-  await app.redis.set(
-    `token:${user.id}`,
+  await app.redis.hset(
+    'token',
+    user.id,
     JSON.stringify({ ...token, expiresAt: Date.now() + expiresIn * 1000 })
   );
 
@@ -155,32 +158,46 @@ app.get('/callback', async (request, reply) => {
 });
 
 async function stream() {
-  const tweets = await new TwitterApiReadOnly(BEARER_TOKEN).v2.userTimeline(
-    USER_ID,
-    {
-      exclude: ['replies', 'retweets'],
-      'tweet.fields': ['id', 'text', 'source'],
-    }
-  );
+  const client = new TwitterApiReadOnly(BEARER_TOKEN);
+  const rules = await client.v2.streamRules();
+  await client.v2.updateStreamRules({
+    delete: {
+      ids: rules.data.map((rule) => rule.id),
+    },
+  });
+  await client.v2.updateStreamRules({
+    add: [
+      {
+        value: `from:${USER_ID}`,
+        tag: 'ID filter',
+      },
+    ],
+  });
+  const stream = await client.v2.searchStream({
+    'tweet.fields': ['id', 'text', 'source'],
+    autoConnect: true,
+  });
 
-  for await (const tweet of tweets) {
+  stream.autoReconnect = true;
+
+  for await (const { data: tweet } of stream) {
     if (tweet.source !== 'twittbot.net') continue;
-    const tokens = await app.redis.hgetall('token:*');
+    const tokens = await app.redis.hgetall('token');
 
     await Promise.all(
-      Object.entries(tokens).map(([key, token]) => {
+      Object.entries(tokens).map(([userId, token]) => {
         const { expiresAt, accessToken, refreshToken } = JSON.parse(
           token
         ) as Token;
-        const [, userId] = key.split(':');
 
         if (Date.now() > expiresAt && refreshToken) {
           return api
             .refreshOAuth2Token(refreshToken)
             .then(({ client, expiresIn, ...token }) =>
               Promise.all([
-                app.redis.set(
-                  key,
+                app.redis.hset(
+                  'token',
+                  userId,
                   JSON.stringify({
                     ...token,
                     expiresAt: Date.now() + expiresIn * 1000,
