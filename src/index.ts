@@ -26,7 +26,6 @@ const {
   BEARER_TOKEN,
   USER_ID,
   HOST,
-  REDIRECT_HOST,
   PORT,
   REDIS_URL,
   SECRET,
@@ -41,14 +40,7 @@ const {
   },
   BEARER_TOKEN: {},
   USER_ID: {},
-  HOST: {
-    from: 'HEROKU_APP_NAME',
-    parse: (value) => `${value}.herokuapp.com`,
-    default: '0.0.0.0:3000',
-  },
-  REDIRECT_HOST: {
-    default: null,
-  },
+  HOST: {},
   PORT: {
     parse: (value) => parseInt(value),
     default: 3000,
@@ -67,7 +59,8 @@ const {
   },
 });
 
-const redirectUri = `https://${REDIRECT_HOST ?? HOST}/callback`;
+const redirectUri = `https://${HOST}/callback`;
+console.log(redirectUri);
 
 const app = fastify({
   logger: !PRODUCTION,
@@ -81,7 +74,7 @@ app.register(FastifySessionPlugin, {
     httpOnly: true,
     maxAge: 1000 * 60 * 60 * 24 * 7,
     path: '/',
-    domain: REDIRECT_HOST ?? HOST,
+    domain: HOST,
   },
 });
 app.register(fastifyRedis, {
