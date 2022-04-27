@@ -34,7 +34,7 @@
     "@fastify/redis": "^5.0.0",
     "@fastify/session": "^8.1.0",
     "fastify": "^3.28.0",
-    "fastify-static": "^4.6.1",
+    "fastify-static": "^4.7.0",
     "redis": "^4.0.6",
     "twitter-api-v2": "^1.12.0"
   }
