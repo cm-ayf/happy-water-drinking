@@ -22,13 +22,12 @@ if (process.env.NODE_ENV !== 'production')
   // eslint-disable-next-line @typescript-eslint/no-var-requires
   require('dotenv').config();
 
-const PORT = 3000;
-
 const {
   BEARER_TOKEN,
   USER_ID,
   HOST,
   REDIRECT_HOST,
+  PORT,
   REDIS_URL,
   SECRET,
   PRODUCTION,
@@ -45,10 +44,14 @@ const {
   HOST: {
     from: 'HEROKU_APP_NAME',
     parse: (value) => `${value}.herokuapp.com`,
-    default: `127.0.0.1:${PORT}`,
+    default: '127.0.0.1:3000',
   },
   REDIRECT_HOST: {
     default: null,
+  },
+  PORT: {
+    parse: (value) => parseInt(value),
+    default: 3000,
   },
   REDIS_URL: {
     default: 'redis://localhost:6379',
