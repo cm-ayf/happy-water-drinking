@@ -176,6 +176,8 @@ async function stream() {
 
   stream.autoReconnect = true;
 
+  process.on('SIGTERM', () => stream.close());
+
   for await (const { data: tweet } of stream) {
     if (tweet.source !== 'twittbot.net') continue;
     const tokens = await app.redis.hgetall('token');
